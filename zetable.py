@@ -4,14 +4,13 @@ import logging
 import numpy as np
 import pandas as pd
 import streamlit as st
-from rich.console import Console
+from rich.console import Console  # Optional, for logging styling
 from rich.table import Table
 from rich import box
 
-# Configure logging and rich console for pretty output.
+# Configure logging.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-console = Console()
 
 # Define a set of stablecoins to exclude.
 STABLECOINS = {
@@ -66,7 +65,7 @@ def calibrate_ranking_beta(tickers):
 
 def update_volume_delta(symbol, current_volume):
     """
-    Update the exponential moving average of volume delta for a given ticker identified by its symbol.
+    Update the exponential moving average of volume delta for a given ticker.
     """
     last_vol = last_volume_dict.get(symbol, current_volume)
     raw_delta = current_volume - last_vol
@@ -78,7 +77,7 @@ def update_volume_delta(symbol, current_volume):
 
 def process_volume_delta(tickers):
     """
-    Update the volume delta for each ticker using the 'quoteVolume' field.
+    Update the volume delta for each ticker using its 'quoteVolume'.
     """
     for ticker in tickers:
         symbol = ticker.get("symbol")
@@ -88,14 +87,12 @@ def process_volume_delta(tickers):
 
 def compute_scores(tickers, ranking_beta, drive, vol_scale):
     """
-    Compute weight, boost, and final score for each ticker.
-    
-    - weight = exp(normalized_exponent), where normalized_exponent is a linear mapping of:
-         raw_exponent = ranking_beta * (N - rank)
-      from the range [0, ranking_beta*(N-1)] to [0, 5].
-      
-    - boost = weight * drive.
-    - score = (percentage change) * (1 + boost * (1 + (vol_delta / vol_scale))).
+    For each ticker, compute:
+      - weight = exp(normalized_exponent)
+         where normalized_exponent = (ranking_beta * (N - rank) / (ranking_beta*(N-1)))*5.
+         This linearly maps the raw exponent to [0, 5].
+      - boost = weight * drive.
+      - score = (percentage change) * (1 + boost * (1 + (vol_delta / vol_scale))).
     """
     sorted_tickers = sorted(tickers, key=lambda x: x.get("percentage", 0.0), reverse=True)
     N = len(sorted_tickers)
@@ -104,7 +101,7 @@ def compute_scores(tickers, ranking_beta, drive, vol_scale):
         ticker["rank"] = rank
         raw_exponent = ranking_beta * (N - rank)
         max_exponent = ranking_beta * (N - 1) if N > 1 else 1
-        normalized_exponent = (raw_exponent / max_exponent) * 5  # Scale raw_exponent to [0,5]
+        normalized_exponent = (raw_exponent / max_exponent) * 5  # Map to [0,5]
         weight = math.exp(normalized_exponent)
         ticker["weight"] = weight
         boost = weight * drive
@@ -116,8 +113,8 @@ def compute_scores(tickers, ranking_beta, drive, vol_scale):
 
 def calibrate_drive(tickers, ranking_beta, drive_candidates):
     """
-    Calibrate drive by selecting the candidate that maximizes the standard deviation of final scores.
-    (No cap is imposed here.)
+    Calibrate drive by choosing the candidate that maximizes the standard deviation of final scores.
+    Also cap drive at 5.
     """
     best_drive = drive_candidates[0]
     best_std = -np.inf
@@ -128,13 +125,14 @@ def calibrate_drive(tickers, ranking_beta, drive_candidates):
         if std > best_std:
             best_std = std
             best_drive = d
-    return best_drive
+    return min(best_drive, 5)
 
 def get_dataframe(tickers):
     """
-    Convert the list of ticker dicts to a pandas DataFrame.
+    Convert the list of tickers (each a dict) into a pandas DataFrame.
     """
     df = pd.DataFrame(tickers)
+    # Reorder columns for clarity.
     cols = ["symbol", "last", "percentage", "rank", "weight", "boost", "score"]
     df = df[cols]
     df.columns = ["Symbol", "Price", "24h %", "Rank", "Weight", "Boost", "Score"]
@@ -143,8 +141,9 @@ def get_dataframe(tickers):
 # ---------------- Streamlit App ----------------
 def run_app():
     st.title("USD Ticker Ranking")
-    st.write("This app fetches USD tickers from Kraken (excluding stablecoin pairs), calibrates ranking parameters, and displays the final ranking.")
+    st.write("This app fetches USD tickers from Kraken (excluding stablecoin pairs), calibrates dynamic ranking parameters, and displays the final ranking.")
     
+    # Create an exchange instance.
     try:
         exchange = ccxt.kraken()
     except Exception as e:
@@ -168,21 +167,26 @@ def run_app():
         st.error("No USD tickers found.")
         return
     
+    # Update volume delta.
     process_volume_delta(tickers_list)
     
+    # Calibrate ranking_beta.
     ideal_ranking_beta = calibrate_ranking_beta(tickers_list)
     st.write(f"Calibrated ranking_beta: {ideal_ranking_beta:.4f}")
     
+    # Calibrate drive.
     drive_candidates = [0.5 * i for i in range(1, 21)]
     ideal_drive = calibrate_drive(tickers_list, ideal_ranking_beta, drive_candidates)
     st.write(f"Calibrated drive: {ideal_drive:.4f}")
     
+    # Compute dynamic vol_scale.
     volumes = [ticker["quoteVolume"] for ticker in tickers_list if ticker["quoteVolume"] > 0]
     vol_scale = np.median(volumes) if volumes else 1.0
     st.write(f"Dynamically computed vol_scale (median volume): {vol_scale:.2f}")
     
     final_tickers = compute_scores(tickers_list, ideal_ranking_beta, ideal_drive, vol_scale=vol_scale)
     df = get_dataframe(final_tickers)
+    
     st.dataframe(df)
 
 if __name__ == "__main__":
