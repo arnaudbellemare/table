@@ -189,6 +189,37 @@ def run_app():
     
     st.dataframe(df)
 
+
+    def create_dataframe(tickers, perc_field, perc_label):
+        data = []
+        for ticker in tickers:
+            data.append({
+                "Symbol": ticker.get("symbol", "N/A"),
+                "Price": f"{ticker.get('last', 0.0):.2f}",
+                perc_label: f"{ticker.get(perc_field, 0.0):.2f}",
+                "Rank": ticker.get("rank", 0),
+                "Weight": f"{ticker.get('weight', 0.0):.2f}",
+                "Boost": f"{ticker.get('boost', 0.0):.2f}",
+                "Score": f"{ticker.get('score', 0.0):.2f}"
+            })
+        return pd.DataFrame(data)
+
+# In your Streamlit app, you can display the DataFrame:
+    df_24 = create_dataframe(final_tickers_24, perc_field="percentage", perc_label="24h %")
+    df_7d = create_dataframe(final_tickers_7d, perc_field="percentage7d", perc_label="7d %")
+    df_30 = create_dataframe(final_tickers_30, perc_field="percentage30d", perc_label="30d %")
+
+# Option to display tables side by side using Streamlit columns:
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.subheader("24h %")
+        st.dataframe(df_24)
+    with col2:
+        st.subheader("7d %")
+        st.dataframe(df_7d)
+    with col3:
+        st.subheader("30d %")
+        st.dataframe(df_30)
 if __name__ == "__main__":
     import streamlit as st
     import pandas as pd
